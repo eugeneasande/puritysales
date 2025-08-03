@@ -1,5 +1,3 @@
-// index.js
-
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
@@ -16,12 +14,10 @@ const GOOGLE_SCRIPT_WEBHOOK_URL = process.env.GOOGLE_SCRIPT_WEBHOOK_URL;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Health check
 app.get('/', (req, res) => {
   res.send('PuritySales backend is alive 🔥');
 });
 
-// Main endpoint
 app.post('/extract-and-assign', async (req, res) => {
   try {
     const { base64pdf, sheetName } = req.body;
@@ -30,13 +26,12 @@ app.post('/extract-and-assign', async (req, res) => {
       return res.status(400).json({ error: 'Missing base64 PDF data.' });
     }
 
-    // 1️⃣ Prepare Gemini request
     const geminiPayload = {
       contents: [{
         parts: [
           {
             text: `From the PDF below, extract all data under the headers 'Assigned To' and 'IMEI'. 
-Return it in this exact JSON format (no explanation):
+Return it as an array of objects in this exact JSON format (NO explanation, no markdown, no bullet points):
 [
   { "name": "Narok", "imei": "355234850433208" },
   ...
@@ -53,7 +48,6 @@ Return it in this exact JSON format (no explanation):
     };
 
     const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
-
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(geminiPayload)
@@ -61,32 +55,46 @@ Return it in this exact JSON format (no explanation):
 
     const geminiData = await geminiResponse.json();
 
-    // DEBUG: Log full Gemini response
+    // DEBUG full Gemini response
     console.log("✅ Raw Gemini response:", JSON.stringify(geminiData, null, 2));
 
-    const textResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+    const textResponse = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!textResponse) {
-      console.error("❌ Gemini returned no usable content.");
       throw new Error('No valid response from Gemini.');
     }
 
+    // ✅ Clean & extract JSON array from Gemini response
     let extractedPairs;
     try {
-      extractedPairs = JSON.parse(textResponse); // Expecting array of { name, imei }
+      const cleanText = textResponse
+        .replace(/```json/, '')
+        .replace(/```/, '')
+        .trim();
+
+      const arrayStart = cleanText.indexOf('[');
+      const arrayEnd = cleanText.lastIndexOf(']');
+
+      if (arrayStart === -1 || arrayEnd === -1) {
+        throw new Error('No JSON array found in Gemini response.');
+      }
+
+      const jsonString = cleanText.substring(arrayStart, arrayEnd + 1);
+      console.log("🧼 Final Cleaned JSON string:\n", jsonString);
+
+      extractedPairs = JSON.parse(jsonString);
     } catch (jsonError) {
-      console.error("❌ Failed to parse Gemini response as JSON:", textResponse);
-      throw new Error("Gemini returned malformed JSON.");
+      console.error("❌ Failed to parse Gemini JSON:", textResponse);
+      throw new Error("Gemini returned invalid JSON.");
     }
 
+    // ✅ Send data to your webhook
     const results = [];
 
-    // 2️⃣ Send each extracted pair to Google Script webhook
     for (let item of extractedPairs) {
       const { imei, name } = item;
 
-      // DEBUG: Log every assign attempt
-      console.log(`➡️ Assigning: IMEI=${imei}, Name=${name}, Sheet=${sheetName || 'auto'}`);
+      console.log(`➡️ Assigning IMEI=${imei} to Name=${name} (Sheet=${sheetName})`);
 
       const assignResponse = await fetch(GOOGLE_SCRIPT_WEBHOOK_URL, {
         method: 'POST',
@@ -96,18 +104,14 @@ Return it in this exact JSON format (no explanation):
 
       const message = await assignResponse.text();
 
-      results.push({
-        imei,
-        name,
-        status: message
-      });
+      results.push({ imei, name, status: message });
     }
 
-    res.json({ status: 'success', results });
+    return res.json({ status: 'success', results });
 
   } catch (err) {
-    console.error('❌ Final Error:', err.message);
-    res.status(500).json({ status: 'error', message: 'Request to backend failed.' });
+    console.error("❌ Final Error:", err.message);
+    return res.status(500).json({ status: 'error', message: 'Request to backend failed.' });
   }
 });
 
