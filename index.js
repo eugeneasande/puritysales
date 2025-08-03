@@ -1,24 +1,30 @@
 // index.js
 
 import express from 'express';
+import cors from 'cors';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GOOGLE_SCRIPT_WEBHOOK_URL = process.env.GOOGLE_SCRIPT_WEBHOOK_URL;
 
+// ✅ Enable CORS (this is the fix)
+app.use(cors());
+
+// ✅ Parse JSON and handle big uploads (PDFs)
 app.use(express.json({ limit: '10mb' }));
 
 // Health check
 app.get('/', (req, res) => {
-  res.send('PuritySales backend is live!');
+  res.send('PuritySales backend is alive 🔥');
 });
 
-// Gemini + Assign IMEI route
+// ✅ POST endpoint for extraction + assignment
 app.post('/extract-and-assign', async (req, res) => {
   try {
     const { base64pdf, sheetName } = req.body;
@@ -27,13 +33,13 @@ app.post('/extract-and-assign', async (req, res) => {
       return res.status(400).json({ error: 'Missing base64 PDF data.' });
     }
 
-    // 1. Call Gemini API to extract IMEI–Name pairs
+    // 1️⃣ Prepare Gemini request
     const geminiPayload = {
       contents: [{
         parts: [
           {
             text: `From the PDF below, extract all data under the headers 'Assigned To' and 'IMEI'. 
-Format the result like:
+Return it in this exact JSON format (no explanation):
 [
   { "name": "Narok", "imei": "355234850433208" },
   ...
@@ -62,13 +68,14 @@ Format the result like:
       throw new Error('No valid response from Gemini.');
     }
 
-    const pairs = JSON.parse(textResponse); // array of { imei, name }
+    const extractedPairs = JSON.parse(textResponse); // Expecting array of { name, imei }
 
-    const resultSummary = [];
+    const results = [];
 
-    // 2. For each pair, send to Google Script webhook
-    for (let item of pairs) {
+    // 2️⃣ Send each extracted pair to Google Script webhook
+    for (let item of extractedPairs) {
       const { imei, name } = item;
+
       const assignResponse = await fetch(GOOGLE_SCRIPT_WEBHOOK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -77,18 +84,18 @@ Format the result like:
 
       const message = await assignResponse.text();
 
-      resultSummary.push({
+      results.push({
         imei,
         name,
         status: message
       });
     }
 
-    res.json({ status: 'done', results: resultSummary });
+    res.json({ status: 'success', results });
 
   } catch (err) {
-    console.error('Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('❌ Error:', err.message);
+    res.status(500).json({ status: 'error', message: err.message });
   }
 });
 
