@@ -1,7 +1,7 @@
 {
   "name": "puritysales-backend",
   "version": "1.0.0",
-  "description": "Backend proxy to assign IMEI names via Google Apps Script",
+  "description": "Backend for extracting IMEI from PDFs and assigning to Google Sheets",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -13,4 +13,3 @@
     "node-fetch": "^2.6.7"
   }
 }
-
