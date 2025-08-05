@@ -20,74 +20,72 @@ app.get('/', (req, res) => {
 
 app.post('/extract-and-assign', async (req, res) => {
   try {
-    const { base64pdf, sheetName, overwrite } = req.body;
+    const { base64pdf, imeis, sheetName, overwrite } = req.body;
 
-    if (!base64pdf) {
-      return res.status(400).json({ error: 'Missing base64 PDF data.' });
+    // 🚨 Validate input
+    if (!base64pdf && (!imeis || !Array.isArray(imeis) || imeis.length === 0)) {
+      return res.status(400).json({ error: 'Either base64pdf or imeis[] is required.' });
     }
 
-    // ✅ Construct Gemini prompt
-    const geminiPayload = {
-      contents: [{
-        parts: [
-          {
-            text: `From the PDF below, extract all data under the headers 'Assigned To' and 'IMEI'. 
+    let extractedPairs = [];
+
+    if (base64pdf) {
+      // ✅ Prompt Gemini with PDF
+      const geminiPayload = {
+        contents: [{
+          parts: [
+            {
+              text: `From the PDF below, extract all data under the headers 'Assigned To' and 'IMEI'. 
 Return it as an array of objects in this exact JSON format with no explanation or markdown:
 
 [
   { "name": "Narok", "imei": "355234850433208" },
   ...
 ]`
-          },
-          {
-            inline_data: {
-              mime_type: 'application/pdf',
-              data: base64pdf
+            },
+            {
+              inline_data: {
+                mime_type: 'application/pdf',
+                data: base64pdf
+              }
             }
-          }
-        ]
-      }]
-    };
+          ]
+        }]
+      };
 
-    // ✅ Call Gemini
-    const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(geminiPayload)
-    });
+      const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(geminiPayload)
+      });
 
-    const geminiData = await geminiResponse.json();
+      const geminiData = await geminiResponse.json();
+      const textResponse = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    const textResponse = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!textResponse) {
-      throw new Error('No valid response from Gemini.');
-    }
+      if (!textResponse) throw new Error('No valid response from Gemini.');
 
-    // ✅ Clean and parse JSON array
-    let extractedPairs;
-    try {
-      const cleanText = textResponse
-        .replace(/```json/, '')
-        .replace(/```/, '')
-        .trim();
+      try {
+        const cleanText = textResponse.replace(/```json/, '').replace(/```/, '').trim();
+        const arrayStart = cleanText.indexOf('[');
+        const arrayEnd = cleanText.lastIndexOf(']');
+        if (arrayStart === -1 || arrayEnd === -1) throw new Error('No JSON array found.');
 
-      const arrayStart = cleanText.indexOf('[');
-      const arrayEnd = cleanText.lastIndexOf(']');
-
-      if (arrayStart === -1 || arrayEnd === -1) {
-        throw new Error('No JSON array found in Gemini response.');
+        const jsonString = cleanText.substring(arrayStart, arrayEnd + 1);
+        extractedPairs = JSON.parse(jsonString);
+      } catch (err) {
+        console.error("❌ JSON parse failed:", textResponse);
+        throw new Error("Gemini returned malformed JSON.");
       }
 
-      const jsonString = cleanText.substring(arrayStart, arrayEnd + 1);
-      console.log("🧼 Cleaned Gemini JSON:", jsonString);
-
-      extractedPairs = JSON.parse(jsonString);
-    } catch (jsonError) {
-      console.error("❌ JSON parse failed:", textResponse);
-      throw new Error("Gemini returned malformed JSON.");
+    } else {
+      // ✅ Manual IMEI entry
+      extractedPairs = imeis.map(raw => ({
+        imei: raw.trim(),
+        name: 'Manual Entry'
+      }));
     }
 
-    // ✅ Process sheetNames (can be comma-separated)
+    // ✅ Sheet name logic
     const sheetNames = (sheetName || '').split(',').map(s => s.trim()).filter(Boolean);
     const sheetTargets = sheetNames.length ? sheetNames : [''];
 
