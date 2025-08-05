@@ -78,11 +78,22 @@ Return it as an array of objects in this exact JSON format with no explanation o
       }
 
     } else {
-      // ✅ Manual IMEI entry
-      extractedPairs = imeis.map(raw => ({
-        imei: raw.trim(),
-        name: 'Manual Entry'
-      }));
+      // ✅ Manual IMEI entry — require name + imei
+      extractedPairs = imeis.map(item => {
+        if (typeof item === 'string') {
+          throw new Error('Manual entries must include both IMEI and Name as an object.');
+        }
+
+        const { imei, name } = item;
+        if (!imei || !name) {
+          throw new Error('Each manual IMEI must include both imei and name.');
+        }
+
+        return {
+          imei: imei.trim(),
+          name: name.trim()
+        };
+      });
     }
 
     // ✅ Sheet name logic
