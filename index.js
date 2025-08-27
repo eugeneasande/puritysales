@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
+import { jsonrepair } from 'jsonrepair';
 
 dotenv.config();
 
@@ -36,11 +37,10 @@ app.post('/extract-and-assign', async (req, res) => {
           parts: [
             {
               text: `From the PDF below, extract all data under the headers 'Assigned To' and 'IMEI'. 
-Return it as an array of objects in this exact JSON format with no explanation or markdown:
+Return it strictly as an array of objects in this exact JSON format with no extra text:
 
 [
-  { "name": "Narok", "imei": "355234850433208" },
-  ...
+  { "name": "Narok", "imei": "355234850433208" }
 ]`
             },
             {
@@ -50,14 +50,20 @@ Return it as an array of objects in this exact JSON format with no explanation o
               }
             }
           ]
-        }]
+        }],
+        generationConfig: {
+          responseMimeType: "application/json"
+        }
       };
 
-      const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiPayload)
-      });
+      const geminiResponse = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(geminiPayload)
+        }
+      );
 
       const geminiData = await geminiResponse.json();
       const textResponse = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -65,16 +71,10 @@ Return it as an array of objects in this exact JSON format with no explanation o
       if (!textResponse) throw new Error('No valid response from Gemini.');
 
       try {
-        const cleanText = textResponse.replace(/```json/, '').replace(/```/, '').trim();
-        const arrayStart = cleanText.indexOf('[');
-        const arrayEnd = cleanText.lastIndexOf(']');
-        if (arrayStart === -1 || arrayEnd === -1) throw new Error('No JSON array found.');
-
-        const jsonString = cleanText.substring(arrayStart, arrayEnd + 1);
-        extractedPairs = JSON.parse(jsonString);
+        extractedPairs = JSON.parse(textResponse);
       } catch (err) {
-        console.error("❌ JSON parse failed:", textResponse);
-        throw new Error("Gemini returned malformed JSON.");
+        console.warn("⚠️ JSON parse failed, attempting repair...");
+        extractedPairs = JSON.parse(jsonrepair(textResponse));
       }
 
     } else {
