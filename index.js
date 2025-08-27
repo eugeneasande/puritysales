@@ -121,11 +121,12 @@ Return it strictly as an array of objects in this exact JSON format with no extr
       }
     }
 
-    return res.json({ status: 'success', results });
+    // ✅ Always send final "done" response
+    return res.json({ status: 'success', results, done: true });
 
   } catch (err) {
     console.error("❌ Final error:", err.message);
-    return res.status(500).json({ status: 'error', message: err.message });
+    return res.status(500).json({ status: 'error', message: err.message, done: true });
   }
 });
 
